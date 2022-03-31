@@ -9,20 +9,21 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configunmarshaler"
-	"gopkg.in/yaml.v3"
 )
 
 type ParamType string
 
 const (
-	stringType   ParamType = "string"
-	intType      ParamType = "int"
-	uintType     ParamType = "uint"
-	floatType    ParamType = "float"
-	boolType     ParamType = "bool"
-	mapType      ParamType = "map"
-	durationType ParamType = "duration"
+	stringType    ParamType = "string"
+	intType       ParamType = "int"
+	uintType      ParamType = "uint"
+	floatType     ParamType = "float"
+	boolType      ParamType = "bool"
+	mapType       ParamType = "map"
+	interfaceType ParamType = "interface{}"
+	durationType  ParamType = "duration"
+	structType    ParamType = "struct"
+	arrayType     ParamType = "array"
 )
 
 type Paramaeter struct {
@@ -32,35 +33,31 @@ type Paramaeter struct {
 	DefaultValue interface{} `yaml:"default_value,omitempty"`
 }
 
-func ScrapeReceiverConfig(factory component.ReceiverFactory) (*string, error) {
-	// Load up default config
-	cfg, err := configunmarshaler.LoadReceiver(config.NewMap(), factory.CreateDefaultConfig().ID(), factory)
-	if err != nil {
-		return nil, err
+func GetConfigMeta(componenetID config.Type, factories *component.Factories) ([]*Paramaeter, error) {
+	// Search Receivers
+	if rcvFactory, ok := factories.Receivers[componenetID]; ok {
+		return scrapeReceiverConfig(rcvFactory)
 	}
 
-	// Get default values as a map we can lookup
-	defaults, err := getDefaultValues(cfg)
-	if err != nil {
-		return nil, err
+	// Search Processors
+	if procFactory, ok := factories.Processors[componenetID]; ok {
+		return scrapeProcessorConfig(procFactory)
 	}
 
-	parameters, err := extractParameters(defaults)
-	if err != nil {
-		return nil, err
+	// Search Exporters
+	if exptFactory, ok := factories.Exporters[componenetID]; ok {
+		return scrapeExporterConfig(exptFactory)
 	}
 
-	//Yaml out
-	data, err := yaml.Marshal(&parameters)
-	if err != nil {
-		return nil, err
+	// Search Extensions
+	if extnFactory, ok := factories.Extensions[componenetID]; ok {
+		return scrapeExtensionConfig(extnFactory)
 	}
-	out := string(data)
 
-	return &out, nil
+	return nil, fmt.Errorf("unknown component %s", componenetID)
 }
 
-func getDefaultValues(cfg config.Receiver) (map[string]interface{}, error) {
+func getDefaultValues(cfg interface{}) (map[string]interface{}, error) {
 	defaults := make(map[string]interface{})
 	if err := mapstructure.Decode(cfg, &defaults); err != nil {
 		return nil, err
@@ -72,21 +69,70 @@ func getDefaultValues(cfg config.Receiver) (map[string]interface{}, error) {
 func extractParameters(defaults map[string]interface{}) ([]*Paramaeter, error) {
 	parameters := make([]*Paramaeter, 0, len(defaults))
 	for k, v := range defaults {
+		// Weird case with for some components. Can't resolve these
+		if k == "" {
+			continue
+		}
 		var paramType ParamType
 		defaultVal := v
 		required := false
 		var err error
+		// switch i := v.(type) {
+		// case int, int8, int16, int32, int64:
+		// 	paramType = intType
+		// case uint, uint8, uint16, uint32, uint64:
+		// 	paramType = uintType
+		// case string:
+		// 	paramType = stringType
+		// case bool:
+		// 	paramType = boolType
+		// case float32, float64:
+		// 	paramType = floatType
+		// case time.Duration, *time.Duration:
+		// 	paramType = durationType
+		// case map[string]interface{}:
+		// 	paramType = mapType
+		// 	defaultVal, err = extractParameters(i)
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+
+		// 	// Maps are never required to we mark all their non-default value required params as not required
+		// 	subParams, ok := defaultVal.([]*Paramaeter)
+		// 	if !ok {
+		// 		return nil, errors.New("bad map value")
+		// 	}
+
+		// 	for _, subParam := range subParams {
+		// 		if subParam.Required && subParam.DefaultValue == nil {
+		// 			subParam.Required = false
+		// 		}
+		// 	}
+		// default:
+		// 	reflectVal := reflect.ValueOf(v)
+		// 	reflectType := reflect.TypeOf(v)
+		// 	if reflectType == nil {
+		// 		// Only interfaces have nil reflect.Types
+		// 		paramType = interfaceType
+		// 		required = true
+		// 	} else {
+		// 		if reflectType.Kind() == reflect.Pointer {
+		// 			// If it's a pointer see if it's nil or not
+		// 			if reflectVal.IsNil() {
+		// 				defaultVal = nil
+		// 			}
+		// 		}
+
+		// 		// This should unwrap any type alias or pointers
+		// 		paramType, err = determineUnderlyingType(reflectType)
+		// 		if err != nil {
+		// 			fmt.Println(err)
+		// 			continue
+		// 		}
+		// 	}
+		// }
+
 		switch i := v.(type) {
-		case int, int8, int16, int32, int64:
-			paramType = intType
-		case uint, uint8, uint16, uint32, uint64:
-			paramType = uintType
-		case string:
-			paramType = stringType
-		case bool:
-			paramType = boolType
-		case float32, float64:
-			paramType = floatType
 		case time.Duration, *time.Duration:
 			paramType = durationType
 		case map[string]interface{}:
@@ -102,25 +148,65 @@ func extractParameters(defaults map[string]interface{}) ([]*Paramaeter, error) {
 				return nil, errors.New("bad map value")
 			}
 
-			for _, subParam := range subParams {
-				if subParam.Required && subParam.DefaultValue == nil {
-					subParam.Required = false
-				}
-			}
+			makeSubParams(&subParams)
 		default:
 			reflectVal := reflect.ValueOf(v)
-			if reflectVal.Type().Kind() == reflect.Pointer {
-				if reflectVal.IsNil() {
-					defaultVal = nil
+			reflectType := reflect.TypeOf(v)
+			if reflectType == nil {
+				// Only interfaces have nil reflect.Types
+				paramType = interfaceType
+				required = true
+			} else {
+				if reflectType.Kind() == reflect.Pointer {
+					// If it's a pointer see if it's nil or not
+					if reflectVal.IsNil() {
+						defaultVal = nil
+					}
 				}
 
-			}
+				// This should unwrap any type alias or pointers
+				paramType, err = determineUnderlyingType(reflectType)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
 
-			// This should unwrap any type alias or pointers
-			paramType, err = determineUnderlyingType(reflectVal.Type())
-			if err != nil {
-				fmt.Println(err)
-				continue
+				switch paramType {
+				case mapType:
+					subMap, ok := v.(map[string]interface{})
+					if ok {
+						defaultVal, err = extractParameters(subMap)
+						if err != nil {
+							return nil, err
+						}
+
+						// Maps are never required to we mark all their non-default value required params as not required
+						subParams, ok := defaultVal.([]*Paramaeter)
+						if !ok {
+							return nil, errors.New("bad map value")
+						}
+
+						makeSubParams(&subParams)
+					}
+				case structType:
+					subMap, err := getDefaultValues(v)
+					if err != nil {
+						return nil, errors.New("bad struct value")
+					}
+
+					defaultVal, err = extractParameters(subMap)
+					if err != nil {
+						return nil, err
+					}
+					paramType = mapType
+
+					subParams, ok := defaultVal.([]*Paramaeter)
+					if !ok {
+						return nil, errors.New("bad struct value")
+					}
+
+					makeSubParams(&subParams)
+				}
 			}
 		}
 
@@ -146,6 +232,11 @@ func extractParameters(defaults map[string]interface{}) ([]*Paramaeter, error) {
 	return parameters, nil
 }
 
+func isNull(v interface{}) bool {
+	reflectVal := reflect.ValueOf(v)
+	return reflectVal.IsNil()
+}
+
 func determineUnderlyingType(reflectType reflect.Type) (kind ParamType, err error) {
 	switch reflectType.Kind() {
 	case reflect.Pointer:
@@ -162,9 +253,22 @@ func determineUnderlyingType(reflectType reflect.Type) (kind ParamType, err erro
 		kind = stringType
 	case reflect.Map:
 		kind = mapType
+	case reflect.Struct:
+		kind = structType
+	case reflect.Slice, reflect.Array:
+		kind = arrayType
 	default:
 		err = fmt.Errorf("Unsupported type: %s", reflectType.Kind())
 	}
 
 	return
+}
+
+// Maps are never required to we mark all their non-default value required params as not required
+func makeSubParams(subParams *[]*Paramaeter) {
+	for _, subParam := range *subParams {
+		if subParam.Required && subParam.DefaultValue == nil {
+			subParam.Required = false
+		}
+	}
 }
