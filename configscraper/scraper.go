@@ -14,17 +14,47 @@ import (
 type ParamType string
 
 const (
-	stringType    ParamType = "string"
-	intType       ParamType = "int"
-	uintType      ParamType = "uint"
-	floatType     ParamType = "float"
-	boolType      ParamType = "bool"
-	mapType       ParamType = "map"
-	interfaceType ParamType = "interface{}"
-	durationType  ParamType = "duration"
-	structType    ParamType = "struct"
-	arrayType     ParamType = "array"
+	StringType    ParamType = "string"
+	IntType       ParamType = "int"
+	UintType      ParamType = "uint"
+	FloatType     ParamType = "float"
+	BoolType      ParamType = "bool"
+	MapType       ParamType = "map"
+	InterfaceType ParamType = "interface{}"
+	DurationType  ParamType = "duration"
+	StructType    ParamType = "struct"
+	ArrayType     ParamType = "array"
 )
+
+func ParamTypeDefault(paramType ParamType) interface{} {
+	switch paramType {
+	case StringType:
+		return ""
+	case IntType:
+		return 0
+	case UintType:
+		return uint(0)
+	case FloatType:
+		return float64(0)
+	case BoolType:
+		return false
+	case DurationType:
+		return time.Duration(0)
+	case ArrayType:
+		return []interface{}{}
+	default:
+		return make(map[string]interface{})
+	}
+}
+
+func IsBasicParamType(paramType ParamType) bool {
+	switch paramType {
+	case StringType, IntType, UintType, FloatType, BoolType, DurationType, ArrayType:
+		return true
+	default:
+		return false
+	}
+}
 
 type Paramaeter struct {
 	Name         string      `yaml:"name"`
@@ -66,84 +96,38 @@ func getDefaultValues(cfg interface{}) (map[string]interface{}, error) {
 	return defaults, nil
 }
 
-func extractParameters(defaults map[string]interface{}) ([]*Paramaeter, error) {
-	parameters := make([]*Paramaeter, 0, len(defaults))
+func extractParameters(defaults map[string]interface{}) (parameters []*Paramaeter, err error) {
+	parameters = make([]*Paramaeter, 0, len(defaults))
 	for k, v := range defaults {
 		// Weird case with for some components. Can't resolve these
-		if k == "" {
+		if k == "" || k == "metrics" {
 			continue
 		}
-		var paramType ParamType
-		defaultVal := v
-		required := false
-		var err error
-		// switch i := v.(type) {
-		// case int, int8, int16, int32, int64:
-		// 	paramType = intType
-		// case uint, uint8, uint16, uint32, uint64:
-		// 	paramType = uintType
-		// case string:
-		// 	paramType = stringType
-		// case bool:
-		// 	paramType = boolType
-		// case float32, float64:
-		// 	paramType = floatType
-		// case time.Duration, *time.Duration:
-		// 	paramType = durationType
-		// case map[string]interface{}:
-		// 	paramType = mapType
-		// 	defaultVal, err = extractParameters(i)
-		// 	if err != nil {
-		// 		return nil, err
-		// 	}
 
-		// 	// Maps are never required to we mark all their non-default value required params as not required
-		// 	subParams, ok := defaultVal.([]*Paramaeter)
-		// 	if !ok {
-		// 		return nil, errors.New("bad map value")
-		// 	}
+		param := &Paramaeter{
+			Name:         k,
+			DefaultValue: v,
+		}
 
-		// 	for _, subParam := range subParams {
-		// 		if subParam.Required && subParam.DefaultValue == nil {
-		// 			subParam.Required = false
-		// 		}
-		// 	}
-		// default:
-		// 	reflectVal := reflect.ValueOf(v)
-		// 	reflectType := reflect.TypeOf(v)
-		// 	if reflectType == nil {
-		// 		// Only interfaces have nil reflect.Types
-		// 		paramType = interfaceType
-		// 		required = true
-		// 	} else {
-		// 		if reflectType.Kind() == reflect.Pointer {
-		// 			// If it's a pointer see if it's nil or not
-		// 			if reflectVal.IsNil() {
-		// 				defaultVal = nil
-		// 			}
-		// 		}
-
-		// 		// This should unwrap any type alias or pointers
-		// 		paramType, err = determineUnderlyingType(reflectType)
-		// 		if err != nil {
-		// 			fmt.Println(err)
-		// 			continue
-		// 		}
-		// 	}
-		// }
+		// Look up known values
+		knownParam, knownParamFound := knownParams[param.Name]
+		if knownParamFound {
+			param.Type = knownParam.Type
+			param.Required = knownParam.Required
+		}
 
 		switch i := v.(type) {
 		case time.Duration, *time.Duration:
-			paramType = durationType
+			param.Type = DurationType
 		case map[string]interface{}:
-			paramType = mapType
-			defaultVal, err = extractParameters(i)
+			param.Type = MapType
+			param.DefaultValue, err = extractParameters(i)
 			if err != nil {
 				return nil, err
 			}
 
 			// Maps are never required to we mark all their non-default value required params as not required
-			subParams, ok := defaultVal.([]*Paramaeter)
+			subParams, ok := param.DefaultValue.([]*Paramaeter)
 			if !ok {
 				return nil, errors.New("bad map value")
 			}
@@ -154,53 +138,52 @@ func extractParameters(defaults map[string]interface{}) ([]*Paramaeter, error) {
 			reflectType := reflect.TypeOf(v)
 			if reflectType == nil {
 				// Only interfaces have nil reflect.Types
-				paramType = interfaceType
-				required = true
+				param.Type = InterfaceType
+				param.Required = true
 			} else {
 				if reflectType.Kind() == reflect.Pointer {
 					// If it's a pointer see if it's nil or not
 					if reflectVal.IsNil() {
-						defaultVal = nil
+						param.DefaultValue = nil
 					}
 				}
 
 				// This should unwrap any type alias or pointers
-				paramType, err = determineUnderlyingType(reflectType)
+				param.Type, err = determineUnderlyingType(reflectType)
 				if err != nil {
-					fmt.Println(err)
 					continue
 				}
 
-				switch paramType {
-				case mapType:
+				switch param.Type {
+				case MapType:
 					subMap, ok := v.(map[string]interface{})
 					if ok {
-						defaultVal, err = extractParameters(subMap)
+						param.DefaultValue, err = extractParameters(subMap)
 						if err != nil {
 							return nil, err
 						}
 
 						// Maps are never required to we mark all their non-default value required params as not required
-						subParams, ok := defaultVal.([]*Paramaeter)
+						subParams, ok := param.DefaultValue.([]*Paramaeter)
 						if !ok {
 							return nil, errors.New("bad map value")
 						}
 
 						makeSubParams(&subParams)
 					}
-				case structType:
+				case StructType:
 					subMap, err := getDefaultValues(v)
 					if err != nil {
 						return nil, errors.New("bad struct value")
 					}
 
-					defaultVal, err = extractParameters(subMap)
+					param.DefaultValue, err = extractParameters(subMap)
 					if err != nil {
 						return nil, err
 					}
-					paramType = mapType
+					param.Type = MapType
 
-					subParams, ok := defaultVal.([]*Paramaeter)
+					subParams, ok := param.DefaultValue.([]*Paramaeter)
 					if !ok {
 						return nil, errors.New("bad struct value")
 					}
@@ -210,20 +193,14 @@ func extractParameters(defaults map[string]interface{}) ([]*Paramaeter, error) {
 			}
 		}
 
-		// If something is not a map and is not a pointer but has a zero value it's not required
-		if paramType != mapType && defaultVal != nil {
-			reflectVal := reflect.ValueOf(v)
+		// If something is not a map and is not a pointer but has a zero value it's required
+		// We also don't want to override known params
+		if param.Type != MapType && param.DefaultValue != nil && !knownParamFound {
+			reflectVal := reflect.ValueOf(param.DefaultValue)
 			if reflectVal.IsZero() {
-				required = true
-				defaultVal = nil
+				param.Required = true
+				param.DefaultValue = nil
 			}
-		}
-
-		param := &Paramaeter{
-			Name:         k,
-			Type:         paramType,
-			Required:     required,
-			DefaultValue: defaultVal,
 		}
 
 		parameters = append(parameters, param)
@@ -242,21 +219,21 @@ func determineUnderlyingType(reflectType reflect.Type) (kind ParamType, err erro
 	case reflect.Pointer:
 		kind, err = determineUnderlyingType(reflectType.Elem())
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		kind = intType
+		kind = IntType
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		kind = uintType
+		kind = UintType
 	case reflect.Bool:
-		kind = boolType
+		kind = BoolType
 	case reflect.Float32, reflect.Float64:
-		kind = floatType
+		kind = FloatType
 	case reflect.String:
-		kind = stringType
+		kind = StringType
 	case reflect.Map:
-		kind = mapType
+		kind = MapType
 	case reflect.Struct:
-		kind = structType
+		kind = StructType
 	case reflect.Slice, reflect.Array:
-		kind = arrayType
+		kind = ArrayType
 	default:
 		err = fmt.Errorf("Unsupported type: %s", reflectType.Kind())
 	}
