@@ -11,6 +11,8 @@ import (
 	"go.opentelemetry.io/collector/config"
 )
 
+var errUnsupportedType = errors.New("unsupported type")
+
 type ParamType string
 
 const (
@@ -116,81 +118,13 @@ func extractParameters(defaults map[string]interface{}) (parameters []*Paramaete
 			param.Required = knownParam.Required
 		}
 
-		switch i := v.(type) {
-		case time.Duration, *time.Duration:
-			param.Type = DurationType
-		case map[string]interface{}:
-			param.Type = MapType
-			param.DefaultValue, err = extractParameters(i)
-			if err != nil {
-				return nil, err
+		// Load param details
+		if err := determineParamDetails(param, v); err != nil {
+			if errors.Is(err, errUnsupportedType) {
+				continue
 			}
 
-			// Maps are never required to we mark all their non-default value required params as not required
-			subParams, ok := param.DefaultValue.([]*Paramaeter)
-			if !ok {
-				return nil, errors.New("bad map value")
-			}
-
-			makeSubParams(&subParams)
-		default:
-			reflectVal := reflect.ValueOf(v)
-			reflectType := reflect.TypeOf(v)
-			if reflectType == nil {
-				// Only interfaces have nil reflect.Types
-				param.Type = InterfaceType
-				param.Required = true
-			} else {
-				if reflectType.Kind() == reflect.Pointer {
-					// If it's a pointer see if it's nil or not
-					if reflectVal.IsNil() {
-						param.DefaultValue = nil
-					}
-				}
-
-				// This should unwrap any type alias or pointers
-				param.Type, err = determineUnderlyingType(reflectType)
-				if err != nil {
-					continue
-				}
-
-				switch param.Type {
-				case MapType:
-					subMap, ok := v.(map[string]interface{})
-					if ok {
-						param.DefaultValue, err = extractParameters(subMap)
-						if err != nil {
-							return nil, err
-						}
-
-						// Maps are never required to we mark all their non-default value required params as not required
-						subParams, ok := param.DefaultValue.([]*Paramaeter)
-						if !ok {
-							return nil, errors.New("bad map value")
-						}
-
-						makeSubParams(&subParams)
-					}
-				case StructType:
-					subMap, err := getDefaultValues(v)
-					if err != nil {
-						return nil, errors.New("bad struct value")
-					}
-
-					param.DefaultValue, err = extractParameters(subMap)
-					if err != nil {
-						return nil, err
-					}
-					param.Type = MapType
-
-					subParams, ok := param.DefaultValue.([]*Paramaeter)
-					if !ok {
-						return nil, errors.New("bad struct value")
-					}
-
-					makeSubParams(&subParams)
-				}
-			}
+			return nil, err
 		}
 
 		// If something is not a map and is not a pointer but has a zero value it's required
@@ -209,7 +143,77 @@ func extractParameters(defaults map[string]interface{}) (parameters []*Paramaete
 	return parameters, nil
 }
 
-func isNull(v interface{}) bool {
+func determineParamDetails(param *Paramaeter, v interface{}) (err error) {
+	switch i := v.(type) {
+	case time.Duration, *time.Duration:
+		param.Type = DurationType
+
+		// If it's a pointer check if it's nill
+		if isNil(v) {
+			param.DefaultValue = nil
+		}
+	case map[string]interface{}:
+		param.Type = MapType
+		param.DefaultValue, err = processNested(i)
+		if err != nil {
+			return
+		}
+	default:
+		reflectVal := reflect.ValueOf(v)
+		reflectType := reflect.TypeOf(v)
+		if reflectType == nil {
+			// Only empty interfaces have nil reflect.Types
+			param.Type = InterfaceType
+			param.Required = true
+			return
+		}
+
+		if reflectType.Kind() == reflect.Pointer {
+			// If it's a pointer see if it's nil or not
+			if reflectVal.IsNil() {
+				param.DefaultValue = nil
+			}
+		}
+
+		// This should unwrap any type alias or pointers
+		param.Type, err = determineUnderlyingType(reflectType)
+		if err != nil {
+			return err
+		}
+
+		// Do post processing on special embedded types
+		switch param.Type {
+		case MapType:
+			subMap, ok := v.(map[string]interface{})
+			if ok {
+				param.DefaultValue, err = processNested(subMap)
+				if err != nil {
+					return
+				}
+			}
+		case StructType:
+			subMap, getErr := getDefaultValues(v)
+			if getErr != nil {
+				return fmt.Errorf("bad struct value: %w", getErr)
+			}
+
+			param.DefaultValue, err = processNested(subMap)
+			if err != nil {
+				return
+			}
+			param.Type = MapType
+		}
+	}
+
+	return
+}
+
+func isNil(v interface{}) bool {
+	reflectType := reflect.TypeOf(v)
+	if reflectType.Kind() != reflect.Pointer {
+		return false
+	}
+
 	reflectVal := reflect.ValueOf(v)
 	return reflectVal.IsNil()
 }
@@ -235,14 +239,25 @@ func determineUnderlyingType(reflectType reflect.Type) (kind ParamType, err erro
 	case reflect.Slice, reflect.Array:
 		kind = ArrayType
 	default:
-		err = fmt.Errorf("Unsupported type: %s", reflectType.Kind())
+		err = errUnsupportedType
 	}
 
 	return
 }
 
+func processNested(subMap map[string]interface{}) ([]*Paramaeter, error) {
+	subParams, err := extractParameters(subMap)
+	if err != nil {
+		return nil, err
+	}
+
+	markSubParams(&subParams)
+
+	return subParams, nil
+}
+
 // Maps are never required to we mark all their non-default value required params as not required
-func makeSubParams(subParams *[]*Paramaeter) {
+func markSubParams(subParams *[]*Paramaeter) {
 	for _, subParam := range *subParams {
 		if subParam.Required && subParam.DefaultValue == nil {
 			subParam.Required = false

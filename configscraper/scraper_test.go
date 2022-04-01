@@ -12,10 +12,6 @@ func TestScraper(t *testing.T) {
 	baseFactories, err := factories.DefaultFactories()
 	require.NoError(t, err)
 
-	// out, err := GetConfigMeta(filelogreceiver.NewFactory().Type(), &baseFactories)
-	// require.NoError(t, err)
-	// require.NotNil(t, out)
-
 	for k := range baseFactories.Receivers {
 		fmt.Println("Receiver:", k)
 		out, err := GetConfigMeta(k, &baseFactories)
@@ -44,7 +40,4 @@ func TestScraper(t *testing.T) {
 		require.NotNil(t, out)
 	}
 
-	// data, err := yaml.Marshal(out)
-	// require.NoError(t, err)
-	// fmt.Println(string(data))
 }
