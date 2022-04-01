@@ -72,7 +72,10 @@ to quickly create a Cobra application.`,
 				}
 			}
 
-			data, err := yaml.Marshal(baseConfigMap)
+			wrapConfig := map[string]interface{}{
+				compName: baseConfigMap,
+			}
+			data, err := yaml.Marshal(wrapConfig)
 			if err != nil {
 				log.Fatalf("Error processing component: %s\n", err)
 			}
