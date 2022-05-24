@@ -16,8 +16,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 
+	"github.com/google/uuid"
 	"github.com/observiq/observiq-otel-collector/collector"
 	"github.com/observiq/observiq-otel-collector/opamp"
 	"github.com/observiq/observiq-otel-collector/opamp/observiq"
@@ -40,6 +43,30 @@ func NewManagedCollectorService(col collector.Collector, logger *zap.Logger, man
 	opampConfig, err := opamp.ParseConfig(managerConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse manager config: %w", err)
+	}
+
+	// If agentid not set, get it from env. Fallback on new random uuid.
+	if opampConfig.AgentID == "" {
+		opampConfig.AgentID = os.Getenv("OPAMP_AGENT_ID")
+		if opampConfig.AgentID == "" {
+			opampConfig.AgentID = uuid.NewString()
+		}
+	}
+
+	// If endpoint not set, get it from environment
+	if opampConfig.Endpoint == "" {
+		opampConfig.Endpoint = os.Getenv("OPAMP_ENDPOINT")
+		if opampConfig.Endpoint == "" {
+			return nil, errors.New("opamp endpoint not set")
+		}
+	}
+
+	// If secret key not set, check if in env
+	if opampConfig.SecretKey == nil {
+		secretKey := os.Getenv("OPAMP_SECRET_KEY")
+		if secretKey != "" {
+			opampConfig.SecretKey = &secretKey
+		}
 	}
 
 	// Create client Args
