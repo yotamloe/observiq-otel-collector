@@ -50,7 +50,7 @@ func LoadPlugin(path string) (*Plugin, error) {
 }
 
 // Render renders the plugin's template as a raw yaml config
-func (p *Plugin) Render(values map[string]interface{}) ([]byte, error) {
+func (p *Plugin) Render(values map[string]interface{}) (*RenderedConfig, error) {
 	template, err := template.New(p.Title).Parse(p.Template)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugin template: %w", err)
@@ -63,7 +63,21 @@ func (p *Plugin) Render(values map[string]interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	return writer.Bytes(), nil
+	var renderedCfg RenderedConfig
+	if err := yaml.Unmarshal(writer.Bytes(), &renderedCfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal yaml bytes: %w", err)
+	}
+
+	renderedCfg.Exporters = map[string]interface{}{
+		emitterTypeStr: nil,
+	}
+
+	for key, pipeline := range renderedCfg.Service.Pipelines {
+		pipeline.Exporters = []string{emitterTypeStr}
+		renderedCfg.Service.Pipelines[key] = pipeline
+	}
+
+	return &renderedCfg, nil
 }
 
 // ApplyDefaults returns a copy of the values map with parameter defaults applied.
