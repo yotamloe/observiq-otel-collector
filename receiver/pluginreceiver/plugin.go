@@ -49,8 +49,8 @@ func LoadPlugin(path string) (*Plugin, error) {
 	return &plugin, nil
 }
 
-// RenderComponents renders the plugin's template as a component map
-func (p *Plugin) RenderComponents(values map[string]interface{}) (*ComponentMap, error) {
+// Render renders the plugin's template as a raw yaml config
+func (p *Plugin) Render(values map[string]interface{}) ([]byte, error) {
 	template, err := template.New(p.Title).Parse(p.Template)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugin template: %w", err)
@@ -63,7 +63,7 @@ func (p *Plugin) RenderComponents(values map[string]interface{}) (*ComponentMap,
 		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	return unmarshalComponentMap(writer.Bytes())
+	return writer.Bytes(), nil
 }
 
 // ApplyDefaults returns a copy of the values map with parameter defaults applied.

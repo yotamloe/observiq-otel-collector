@@ -85,6 +85,8 @@ func createReceiver(cfg config.Receiver, set component.ReceiverCreateSettings, e
 		return nil, fmt.Errorf("invalid plugin parameter: %w", err)
 	}
 
+	yamlBytes, err := plugin.Render(receiverConfig.Parameters)
+
 	components, err := plugin.RenderComponents(receiverConfig.Parameters)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render plugin components: %w", err)
