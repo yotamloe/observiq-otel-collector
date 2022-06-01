@@ -20,45 +20,51 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/configunmarshaler"
+	"go.opentelemetry.io/collector/config/mapconverter/expandmapconverter"
+	"go.opentelemetry.io/collector/config/mapprovider/yamlmapprovider"
+	"go.opentelemetry.io/collector/service"
 	"gopkg.in/yaml.v2"
 )
 
 // ConfigProvider implements the service.ConfigProvider interface
 type ConfigProvider struct {
-	components   *ComponentMap
-	errChan      chan error
-	unmarshaller configunmarshaler.ConfigUnmarshaler
+	components *ComponentMap
+	provider   service.ConfigProvider
 }
 
 // createConfigProvider creates a config provider
 func createConfigProvider(components *ComponentMap) *ConfigProvider {
+	yamlBytes, _ := yaml.Marshal(components)
+	yamlLocation := fmt.Sprintf("yaml:%s", string(yamlBytes))
+	mapProvider := yamlmapprovider.New()
+
+	cfgProviderSettings := service.ConfigProviderSettings{
+		Locations:     []string{yamlLocation},
+		MapProviders:  map[string]config.MapProvider{mapProvider.Scheme(): mapProvider},
+		MapConverters: []config.MapConverter{expandmapconverter.New()},
+	}
+
+	cfgProvider, _ := service.NewConfigProvider(cfgProviderSettings)
+
 	return &ConfigProvider{
-		components:   components,
-		errChan:      make(chan error),
-		unmarshaller: configunmarshaler.NewDefault(),
+		components: components,
+		provider:   cfgProvider,
 	}
 }
 
 // Get returns the underlying config of the provider
-func (c *ConfigProvider) Get(_ context.Context, factories component.Factories) (*config.Config, error) {
-	configMap := c.components.ToConfigMap()
-	config, err := c.unmarshaller.Unmarshal(configMap, factories)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config map: %w", err)
-	}
-
-	return config, nil
+func (c *ConfigProvider) Get(ctx context.Context, factories component.Factories) (*config.Config, error) {
+	return c.provider.Get(ctx, factories)
 }
 
 // Watch returns a channel that indicates updates to the config
 func (c *ConfigProvider) Watch() <-chan error {
-	return c.errChan
+	return c.provider.Watch()
 }
 
 // Shutdown always returns nil and is a no-op
-func (c *ConfigProvider) Shutdown(_ context.Context) error {
-	return nil
+func (c *ConfigProvider) Shutdown(ctx context.Context) error {
+	return c.provider.Shutdown(ctx)
 }
 
 // GetRequiredFactories returns the factories required for the configured components
