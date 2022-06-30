@@ -145,7 +145,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			OnConnectFunc:          c.onConnectHandler,
 			OnConnectFailedFunc:    c.onConnectFailedHandler,
 			OnErrorFunc:            c.onErrorHandler,
-			OnRemoteConfigFunc:     c.onRemoteConfigHandler,
+			OnMessageFunc:          c.onRemoteConfigHandler,
 			GetEffectiveConfigFunc: c.onGetEffectiveConfigHandler,
 			// Unimplemented Handles
 			// SaveRemoteConfigStatusFunc:
@@ -189,8 +189,35 @@ func (c *Client) onErrorHandler(errResp *protobufs.ServerErrorResponse) {
 	c.logger.Error("Server returned an error response", zap.String("Error", errResp.GetErrorMessage()))
 }
 
-func (c *Client) onRemoteConfigHandler(_ context.Context, remoteConfig *protobufs.AgentRemoteConfig) (*protobufs.EffectiveConfig, bool, error) {
-	c.logger.Debug("Remote config handler")
+// func (c *Client) onRemoteConfigHandler(_ context.Context, remoteConfig *protobufs.AgentRemoteConfig) (*protobufs.EffectiveConfig, bool, error) {
+// 	c.logger.Debug("Remote config handler")
+
+// 	effectiveConfig, changed, err := c.configManager.ApplyConfigChanges(remoteConfig)
+// 	if err != nil {
+// 		c.logger.Error("Failed applying remote config", zap.Error(err))
+// 		return nil, changed, fmt.Errorf("Failed to apply config changes: %w", err)
+// 	}
+
+// 	return effectiveConfig, changed, nil
+// }
+
+func (c *Client) onMessageHandler(_ context.Context, messageData *types.MessageData) {
+	c.logger.Debug("Message Handler")
+
+	remoteConfig := messageData.RemoteConfig
+
+	if remoteConfig != nil {
+		c.logger.Debug("Remote Config Handler")
+		effectiveConfig, changed, err := c.configManager.ApplyConfigChanges(remoteConfig)
+		remoteConfigStatus := RemoteConfigStatus{}
+		if err != nil {
+			c.logger.Error("Failed applying remote config", zap.Error(err))
+			c.opampClient.SetRemoteConfigStatus()
+		}
+	}
+
+	// OpAMPClient.SetRemoteConfigStatus
+	// OpAMPClient.UpdateEffectiveConfig
 
 	effectiveConfig, changed, err := c.configManager.ApplyConfigChanges(remoteConfig)
 	if err != nil {
