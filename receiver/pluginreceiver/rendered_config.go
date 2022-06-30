@@ -19,8 +19,9 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config"
-	"go.opentelemetry.io/collector/config/mapconverter/expandmapconverter"
-	"go.opentelemetry.io/collector/config/mapprovider/yamlmapprovider"
+	"go.opentelemetry.io/collector/confmap"
+	"go.opentelemetry.io/collector/confmap/converter/expandconverter"
+	"go.opentelemetry.io/collector/confmap/provider/yamlprovider"
 	"go.opentelemetry.io/collector/service"
 	"gopkg.in/yaml.v2"
 )
@@ -74,12 +75,12 @@ func (r *RenderedConfig) GetConfigProvider() (service.ConfigProvider, error) {
 	}
 
 	location := fmt.Sprintf("yaml:%s", bytes)
-	provider := yamlmapprovider.New()
-	converter := expandmapconverter.New()
+	provider := yamlprovider.New()
+	converter := expandconverter.New()
 	settings := service.ConfigProviderSettings{
 		Locations:     []string{location},
-		MapProviders:  map[string]config.MapProvider{provider.Scheme(): provider},
-		MapConverters: []config.MapConverter{converter},
+		MapProviders:  map[string]confmap.Provider{provider.Scheme(): provider},
+		MapConverters: []confmap.Converter{converter},
 	}
 
 	return service.NewConfigProvider(settings)
